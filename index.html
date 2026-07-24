@@ -503,12 +503,12 @@ const A = {
   chats:{}, activeId:null,
   useMem:true, useStream:true, useScroll:true, useTTS:false, ttsVoice:'',
   theme:'dark', model:'claude-sonnet-4-6',
-  persona:`You are "ChatPro" — a fast, smart, friendly AI assistant.\n\nPersonality:\n- Warm, witty, and friendly tone\n- Explain technical things with simple, real-world examples\n- When giving code, provide working code with comments\n- Use markdown — headers, code blocks, tables, bold\n- If you know the user's name or details about them, use that naturally\n- Be concise unless the user asks for more detail`,
+  persona:`You are "ChatPro" — a fast, smart, friendly AI assistant with access to a live web_search tool.\n\nPersonality:\n- Warm, witty, and friendly tone\n- Explain technical things with simple, real-world examples\n- When giving code, provide working code with comments\n- Use markdown — headers, code blocks, tables, bold\n- If you know the user's name or details about them, use that naturally\n- Be concise unless the user asks for more detail\n\nStaying current:\n- You have a web_search tool. Use it whenever the question involves news, current events, prices, scores, recent releases, "latest"/"today"/"now", or anything that could have changed since your training — always search rather than relying on memory for these.\n- When you search, prefer the most recent results and say when something happened if relevant.\n- Never answer a substantive question with just "yes", "no", or "everything is fine" — always give the real, specific answer with the relevant details, even if brief.`,
   mems:[], file:null, busy:false,
   used:0, lim:50, len:'normal',
   ttsActive:false, mic:null, micOn:false,
   personas:[
-    {id:'default', name:'ChatPro', icon:'✦', prompt:`You are "ChatPro" — a fast, smart, friendly AI assistant.\n\nPersonality:\n- Warm, witty, and friendly tone\n- Explain technical things with simple examples\n- Use markdown for formatting\n- If you know the user's name or details about them, use that naturally`},
+    {id:'default', name:'ChatPro', icon:'✦', prompt:`You are "ChatPro" — a fast, smart, friendly AI assistant with access to a live web_search tool.\n\nPersonality:\n- Warm, witty, and friendly tone\n- Explain technical things with simple examples\n- Use markdown for formatting\n- If you know the user's name or details about them, use that naturally\n- Always use web_search for news, current events, or anything time-sensitive — never rely on stale memory for those\n- Never answer with just "yes"/"no"/"all fine" — always give the real, specific details`},
     {id:'coder',   name:'Code Expert', icon:'💻', prompt:`You are an expert software engineer and coding assistant.\n- Always write clean, working, commented code\n- Explain every step clearly\n- Suggest best practices and optimizations\n- Use markdown code blocks with syntax highlighting`},
     {id:'writer',  name:'Writer', icon:'✍️', prompt:`You are a creative writer and content expert.\n- Write engaging, clear, and compelling content\n- Adjust tone to match what the user is asking for\n- Pay close attention to grammar and flow\n- Comfortable writing in multiple languages and styles`},
     {id:'teacher', name:'Teacher', icon:'🎓', prompt:`You are a patient, clear teacher.\n- Explain concepts using simple examples\n- Use analogies and real-world connections\n- Check whether the user has understood\n- Stay encouraging and positive`},
@@ -923,7 +923,7 @@ async function doStream(sys,msgs,savedIdx,hadFile){
   bbl.innerHTML='<span class="cur"></span>';
   let full='';
   try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:A.model,max_tokens:2048,stream:true,system:sys,messages:msgs})});
+    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:A.model,max_tokens:3072,stream:true,system:sys,messages:msgs,tools:[{type:'web_search_20250305',name:'web_search'}]})});
     if(!r.ok){const e=await r.json();bbl.innerHTML=`<span style="color:var(--ar)">⚠ ${e.error?.message||'Error'}</span>`;return;}
     const reader=r.body.getReader();const dec=new TextDecoder();let buf='';
     while(true){
@@ -944,7 +944,7 @@ async function doStream(sys,msgs,savedIdx,hadFile){
 async function doBatch(sys,msgs,hadFile){
   const typ=mkTyping();document.getElementById('msgs').appendChild(typ);scrollBot();
   try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:A.model,max_tokens:2048,system:sys,messages:msgs})});
+    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:A.model,max_tokens:3072,system:sys,messages:msgs,tools:[{type:'web_search_20250305',name:'web_search'}]})});
     const d=await r.json();typ.remove();
     if(!r.ok){appendBot(`⚠ ${d.error?.message||'Error'}`,null,false,true);return;}
     const reply=d.content.filter(b=>b.type==='text').map(b=>b.text).join('').trim();
@@ -955,12 +955,14 @@ async function doBatch(sys,msgs,hadFile){
 
 function finalRender(bbl,text){
   bbl.innerHTML=renderMD(text);
-  bbl.querySelectorAll('pre code').forEach(b=>{
-    hljs.highlightElement(b);
-    const cb=document.createElement('button');cb.className='cpbtn';cb.textContent='copy';
-    cb.onclick=()=>{navigator.clipboard.writeText(b.textContent);cb.textContent='copied!';setTimeout(()=>cb.textContent='copy',2000);};
-    b.parentElement.style.position='relative';b.parentElement.appendChild(cb);
-  });
+  try{
+    bbl.querySelectorAll('pre code').forEach(b=>{
+      try{ if(typeof hljs!=='undefined') hljs.highlightElement(b); }catch(e){ /* highlighting is cosmetic only, never let it break the answer */ }
+      const cb=document.createElement('button');cb.className='cpbtn';cb.textContent='copy';
+      cb.onclick=()=>{navigator.clipboard.writeText(b.textContent);cb.textContent='copied!';setTimeout(()=>cb.textContent='copy',2000);};
+      b.parentElement.style.position='relative';b.parentElement.appendChild(cb);
+    });
+  }catch(e){ /* never let rendering extras break the message */ }
   if(A.useScroll)scrollBot();
 }
 
@@ -1058,7 +1060,7 @@ async function regenMsg(idx){
   const sys=A.persona+memCtx()+lenHint();
   let full='';
   try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:A.model,max_tokens:2048,stream:true,system:sys,messages:apiMsgs})});
+    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:A.model,max_tokens:3072,stream:true,system:sys,messages:apiMsgs,tools:[{type:'web_search_20250305',name:'web_search'}]})});
     if(!r.ok){if(bbl)bbl.innerHTML='<span style="color:var(--ar)">⚠ Error</span>';A.busy=false;document.getElementById('sbtn').disabled=false;return;}
     const reader=r.body.getReader();const dec=new TextDecoder();let buf='';
     while(true){const{done,value}=await reader.read();if(done)break;buf+=dec.decode(value,{stream:true});const lines=buf.split('\n');buf=lines.pop();for(const l of lines){if(!l.startsWith('data: '))continue;const d=l.slice(6).trim();if(d==='[DONE]')break;try{const p=JSON.parse(d);if(p.type==='content_block_delta'&&p.delta?.type==='text_delta'){full+=p.delta.text;if(bbl){bbl.innerHTML=esc(full).replace(/\n/g,'<br>')+'<span class="cur"></span>';if(A.useScroll)scrollBot();}}}catch(e){}}}
